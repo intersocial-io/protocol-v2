@@ -119,7 +119,7 @@ RSS的channel中，可以添加Action项。Action项类似于Item项，用于承
 ```xml
 <action type="like"> <!-- type项是操作类型 -->
   <id>9d9940f4-01c4-c257-6771-e721eb7a48cd</id> <!-- UUID -->
-  <target>alice.example.com/helloworld</target> <!-- 目标，可以是用户标识符或帖子标识符 -->
+  <target>alice.example.com/helloworld</target> <!-- 目标，可以是用户标识符、帖子标识符、互动UUID等 -->
 </action>
 ```
 操作类型列表：
@@ -129,6 +129,7 @@ RSS的channel中，可以添加Action项。Action项类似于Item项，用于承
 | downvote | 点踩 | 帖子 |
 | repost | 转发 | 帖子 |
 | subscribe | 关注 | 用户 |
+| cancel | 取消 | 互动 |
 
 Action端点：`GET https://<服务器域名>/.well-known/intersocial2/action/<UUID>`
 
@@ -181,7 +182,7 @@ Action端点：`GET https://<服务器域名>/.well-known/intersocial2/action/<U
     {
       "server": "<源服务器域名>",
       "type": "interactive",
-      "id": "<UUID>"
+      "id": "<互动的UUID>"
     }
   ]
 }
@@ -246,15 +247,22 @@ InterSocial2的私聊协议是 Matrix。
 ```
 
 随后，源服务器需要计算签名，签名的计算规则：
-
-`签名 = md5("intersocial_matrix_" + md5(<源用户标识符>) + md5(<源Matrix>) + md5(<目标Matrix>) + md5(<签名私密码>))`
-
-此处的MD5全部输出小写16进制字符串，不包含任何前后缀；`+`符号代表文本拼接。
+```php
+$sign = md5(
+  "intersocial_matrix_"
+  . md5(
+    md5($source_identifier) // 源用户标识符
+    . md5($source_matrix) // 源Matrix地址
+    . md5($target_martix) // 目标Matrix地址
+  ) . $secret // 签名私密码
+)
+```
 
 随后，源服务器通过Matrix向目标服务器发送一个聊天消息（即“握手消息”），内容是一个JSON文本，定义如下：
 ```json
 {
   "type": "intersocial2.matrixchat.handshake",
+  "version": "2a",
   "sign": "<签名码>",
   "user": "<源用户标识符>"
 }
@@ -263,11 +271,44 @@ InterSocial2的私聊协议是 Matrix。
 ```json
 {
   "type": "intersocial2.matrixchat.handshake",
+  "version": 2,
   "sign": "4d12b08f63fee0657f884f87d5d42bad",
   "user": "bob.example.org"
 }
 ```
 
+然后，目标服务器发送一串hello码，即可完成最终握手。格式：
+```
+INTERSOCIAL ACCEPTED HELLO <与私聊请求相同的UUID> V=2
+```
+例如：
+```
+INTERSOCIAL ACCEPTED HELLO 65a0ba40-46d6-5802-ab26-f8063c51123b V=2
+```
+
 ### 3.4. 多消息同时推送
 
 只需要将多个请求的data合并为多项列表再发送即可。
+
+## 4. 绑定验证
+
+如需进行InterSocial2账号绑定验证，需要先生成Secret，然后获得Secret哈希：
+```php
+$hash = md5("intersocial_secret_blobcat" . $secret)
+```
+绑定跳转URL：`https://<服务器域名>/.well-known/isisauth/create?callback=<跳转URL>&secrethash=<Secret哈希>&hashver=1`
+
+最终返回的URL：`<callback地址>?authcode=<auth码>`
+
+取回用户信息的端点：`https://<服务器域名>/.well-known/isisauth/resolve?authcode=<auth码>`
+
+返回的数据（JSON格式）：
+```json
+{
+  "code": 200,
+  "success": true,
+  "intersocial2":{
+    "username": "<用户名>"
+  }
+}
+```
